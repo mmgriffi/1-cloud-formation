@@ -67,12 +67,32 @@ curl http://atu-l00213529-cloudformation.s3-website-eu-west-1.amazonaws.com
 
 ## AWS Cloudformation IaC generator
 
-Once the website is validated, use AWS CloudFormation IaC generator to create the Cloud Formation script. I did this initially from the console following this tutorial  https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/generate-IaC.html
-The output from this is CFtemplate-Assignment1-template.yaml
+Once the website is validated, use AWS CloudFormation IaC generator to create the Cloud Formation script. I did this initially from the console following this tutorial  https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/generate-IaC.html.
+
+* When generating the template, it's important to ensure you include the required resources (on the 1st run I missed including the bucket policy)
+* One the template is validated it can be imported to a Stack. 
+* The template file was saved to this repository as CFtemplate-Assignment1-template.yaml
+
 
 ## Cleanup
-To avoid costs remove the s3 bucket
+To avoid AWS costs remove the s3 bucket and delete the stack. 
 ```
 aws s3 rb s3://atu-l00213529-cloudformation --force --region eu-west-1
 aws cloudformation delete-stack --stack-name CF-Stack-Assignment1 --region eu-west-1
 ```
+
+## Recreate the infrastucture
+From the command line this repo can be recreated using AWS CLI commands. 
+
+* Apply the Cloud Formation Template.
+````
+cd infra
+aws cloudformation create-stack ^
+  --stack-name CF-Stack-Assignment1 ^
+  --template-body file://CFtemplate-Assignment1-template.yaml ^
+  --region eu-west-1
+````
+
+* Redeploy the static files
+cd ..
+aws s3 cp src/ s3://atu-l00213529-cloudformation/ --recursive --region eu-west-1
