@@ -32,3 +32,17 @@ Resources:
       Tags:
         - Key: Environment
           Value: Assignment1
+  S3BucketPolicyAtul00213529cloudformation:
+    UpdateReplacePolicy: "Delete"
+    Type: "AWS::S3::BucketPolicy"
+    DeletionPolicy: "Delete"
+    Properties:
+      Bucket: "atu-l00213529-cloudformation"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Resource: "arn:aws:s3:::atu-l00213529-cloudformation/*"
+          Action: "s3:GetObject"
+          Effect: "Allow"
+          Principal: "*"
+          Sid: "PublicReadForWebsite"
