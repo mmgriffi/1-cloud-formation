@@ -1,0 +1,168 @@
+# Cloud Formation template for Assignment 2. Mike Griffin L00213529
+Metadata:
+  AWSToolsMetrics:
+    IaC_Generator: "arn:aws:cloudformation:eu-west-1:299954288833:generatedTemplate/8d229b60-8b5e-48d6-b116-41c28d82ce41"
+Resources:
+ AssignmentVPC:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::VPC"
+  DeletionPolicy: "Delete"
+  Properties:
+   CidrBlock: "10.0.0.0/16"
+   EnableDnsSupport: true
+   EnableDnsHostnames: true
+   Tags:
+   - Value: "AssignmentVPC"
+     Key: "Name"
+ InternetGateway:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::InternetGateway"
+  DeletionPolicy: "Delete"
+  Properties:
+   Tags:
+   - Value: "InternetGateway"
+     Key: "Name"
+ AssignmentVPCGatewayAttachment:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::VPCGatewayAttachment"
+  DeletionPolicy: "Delete"
+  Properties:
+   InternetGatewayId: !Ref InternetGateway
+   VpcId: !Ref AssignmentVPC
+ PublicWebSubnet:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::Subnet"
+  DeletionPolicy: "Delete"
+  Properties:
+   MapPublicIpOnLaunch: true
+   VpcId: !Ref AssignmentVPC
+   AvailabilityZone: "eu-west-1b"
+   CidrBlock: "10.0.1.0/24"
+   Tags:
+   - Value: "PublicWebSubnet"
+     Key: "Name"
+ PrivateAppSubnet:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::Subnet"
+  DeletionPolicy: "Delete"
+  Properties:
+   VpcId: !Ref AssignmentVPC
+   AvailabilityZone: "eu-west-1b"
+   CidrBlock: "10.0.10.0/24"
+   Tags:
+   - Value: "PrivateAppSubnet"
+     Key: "Name"
+ PrivateDbSubnet:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::Subnet"
+  DeletionPolicy: "Delete"
+  Properties:
+   VpcId: !Ref AssignmentVPC
+   AvailabilityZone: "eu-west-1b"
+   CidrBlock: "10.0.20.0/24"
+   Tags:
+   - Value: "PrivateDbSubnet"
+     Key: "Name"
+ PublicRouteTable:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::RouteTable"
+  DeletionPolicy: "Delete"
+  Properties:
+   VpcId: !Ref AssignmentVPC
+   Tags:
+   - Value: "PublicRouteTable"
+     Key: "Name"        
+ PrivateRouteTable:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::RouteTable"
+  DeletionPolicy: "Delete"
+  Properties:
+   VpcId: !Ref AssignmentVPC
+   Tags:
+   - Value: "PrivateRouteTable"
+     Key: "Name"
+ PublicRouteEntry1:
+  DependsOn:
+  - AssignmentVPCGatewayAttachment
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::Route"
+  DeletionPolicy: "Delete"
+  Properties:
+   GatewayId: !Ref InternetGateway
+   RouteTableId: !Ref PublicRouteTable
+   DestinationCidrBlock: "0.0.0.0/0"
+ PublicSubnetAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   SubnetId: !Ref PublicWebSubnet
+   RouteTableId: !Ref PublicRouteTable
+ AppSubnetAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   SubnetId: !Ref PrivateAppSubnet
+   RouteTableId: !Ref PrivateRouteTable
+ DbSubnetAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   SubnetId: !Ref PrivateDbSubnet
+   RouteTableId: !Ref PrivateRouteTable
+ WebSecurityGroup:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::SecurityGroup"
+  DeletionPolicy: "Delete"
+  Properties:
+   GroupDescription: "Allows HTTP/HTTPS traffic from the internet to the web server."
+   GroupName: "web-sg-assignment1"
+   Tags:
+   - Key: Name
+     Value: WebSecurityGroup
+   VpcId: !Ref AssignmentVPC
+   SecurityGroupIngress:
+   - CidrIp: "0.0.0.0/0"
+     IpProtocol: "tcp"
+     FromPort: 80
+     ToPort: 80
+   - CidrIp: "0.0.0.0/0"
+     IpProtocol: "tcp"
+     FromPort: 443
+     ToPort: 443
+ AppSecurityGroup:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::SecurityGroup"
+  DeletionPolicy: "Delete"
+  Properties:
+   GroupDescription: "Allows traffic only from the web server on the application\
+      \ port (e.g. 5000)."
+   GroupName: "app-sg-assignment1"
+   Tags:
+   - Key: Name
+     Value: AppSecurityGroup
+   VpcId: !Ref AssignmentVPC
+   SecurityGroupIngress:
+   - IpProtocol: "tcp"
+     FromPort: 5000
+     SourceSecurityGroupId: !Ref WebSecurityGroup
+     ToPort: 5000
+   SecurityGroupEgress:
+   - IpProtocol: "-1"
+     CidrIp: "0.0.0.0/0"
+ DbSecurityGroup:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::SecurityGroup"
+  DeletionPolicy: "Delete"
+  Properties:
+   GroupDescription: "Allows database traffic only from the application server."
+   GroupName: "db-sg-assignment1"
+   Tags:
+   - Key: Name
+     Value: DbSecurityGroup
+   VpcId: !Ref AssignmentVPC
+   SecurityGroupIngress:
+   - IpProtocol: "tcp"
+     FromPort: 3306
+     SourceSecurityGroupId: !Ref AppSecurityGroup
+     ToPort: 3306
+   SecurityGroupEgress:
+   - CidrIp: "0.0.0.0/0"
+     IpProtocol: "-1"
+

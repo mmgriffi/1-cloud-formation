@@ -21,5 +21,49 @@ See [CLI Commands ](infra/cli/cli_commands.md) for the steps used.
 * Import to a CloudFormation Stack.
 * Save template file to GitHub repository (CFtemplate-Assignment1-template.yaml). 
 
+3.Apply the Cloud Formation Template.
+````
+aws cloudformation create-stack ^
+  --stack-name CF-Stack-Assignment1 ^
+  --template-body file://CFtemplate-Assignment1-template.yaml ^
+  --region eu-west-1
+````
+* Redeploy the static files
+aws s3 cp src/ s3://atu-l00213529-cloudformation/ --recursive --region eu-west-1
+
+* Test the URL http://atu-l00213529-cloudformation.s3-website-eu-west-1.amazonaws.com/
+
+
+## Part 2 - Create a 3 tier application (webserver, appnode + database)
+To test CloudFormation I developed a a simple 3 tier application
+
+- Web tier using node js and express. A web server on port 80 will make a call to the mid tier app via port 5000.
+- App Tier using node js and express. Listening on port 5000, this will query MySQL Instance on port 3306.
+- DB Tier using MySQL. Running on port 3306. Has a simple database with 2 records.
+
+A browser session to the IP address of the web tier will return a page with a load users button. Clicking this will result in a query to the database and records returned to the page.
+
+1. Create basic Web app.
+The code/files for the web application are in src\3tierapp. I got initial code from Google AI for for webfront-end and nodejs app running on pm2 (node 1) querying a mysql database on a database server (node 2).  This was expanded to a full 3 tier app , with a server script on webnode calling an app node. This was tested on homelab Ubuntu VMs with the network isolation blocking all requests to the app and db tier except from the webserver or app node respectively on defined ports.
+
+
+2. Create Networking Components. 
+I created the VPC and associated components on AWS console initially. Then used IaC generator to scan applicable resources and created the Template file. Then edited the file to make a consistent naming scheme for the components. I used Co-Pilot to ID sections of the IaC generated script that were unnecessary and updated the file.
+
+* Note : I wish to keep the VPC/subnets/security group creation seperate from the EC2 
+instances and application setup. This is in line with AWS best practices (see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html#organizingstacks) 
+
+* The resulting Template file is CF-NetworkStack-Assignment2.yaml. Apply this as follows : 
+````
+aws cloudformation create-stack ^
+  --stack-name CF-NetworkStack-Assignment2 ^
+  --template-body file://CF-NetworkStack-Assignment2.yaml ^
+  --region eu-west-1
+````
+
+![AssignmentVPC](images/AssignmentVPC.jpg)
+
+
+
 ## Contact
 Feel free to contact mailto:L00213529@atu.ie with questions or suggestions.
