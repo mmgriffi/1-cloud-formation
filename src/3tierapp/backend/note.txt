@@ -1,0 +1,3 @@
+files are copied to /opt/backend  (make directory)
+then run the app
+pm2 start server.js --name app-tier
