@@ -1,0 +1,3 @@
+start the PM2 service by 
+pm2 start server.js --name web-tier
+pm2 restart web-tier --update-env
