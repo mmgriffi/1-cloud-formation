@@ -52,16 +52,27 @@ Resources:
    Tags:
    - Value: "PrivateAppSubnet"
      Key: "Name"
- PrivateDbSubnet:
+ PrivateDbSubnetA:
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::Subnet"
+  DeletionPolicy: "Delete"
+  Properties:
+   VpcId: !Ref AssignmentVPC
+   AvailabilityZone: "eu-west-1a"
+   CidrBlock: "10.0.20.0/24"
+   Tags:
+   - Value: "PrivateDbSubnetA"
+     Key: "Name"
+ PrivateDbSubnetB:
   UpdateReplacePolicy: "Delete"
   Type: "AWS::EC2::Subnet"
   DeletionPolicy: "Delete"
   Properties:
    VpcId: !Ref AssignmentVPC
    AvailabilityZone: "eu-west-1b"
-   CidrBlock: "10.0.20.0/24"
+   CidrBlock: "10.0.30.0/24"
    Tags:
-   - Value: "PrivateDbSubnet"
+   - Value: "PrivateDbSubnetB"
      Key: "Name"
  PublicRouteTable:
   UpdateReplacePolicy: "Delete"
@@ -101,11 +112,16 @@ Resources:
   Properties:
    SubnetId: !Ref PrivateAppSubnet
    RouteTableId: !Ref PrivateRouteTable
- DbSubnetAssociation:
+ DbSubnetAAssociation:
   Type: AWS::EC2::SubnetRouteTableAssociation
   Properties:
-   SubnetId: !Ref PrivateDbSubnet
+   SubnetId: !Ref PrivateDbSubnetA
    RouteTableId: !Ref PrivateRouteTable
+ DbSubnetBAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   SubnetId: !Ref PrivateDbSubnetB
+   RouteTableId: !Ref PrivateRouteTable 
  WebSecurityGroup:
   UpdateReplacePolicy: "Delete"
   Type: "AWS::EC2::SecurityGroup"
@@ -165,4 +181,50 @@ Resources:
    SecurityGroupEgress:
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "-1"
-
+ RDSSubnetGroup:
+  Type: AWS::RDS::DBSubnetGroup
+  Properties:
+    DBSubnetGroupDescription: DB Subnet Group for RDS
+    SubnetIds:
+      - !Ref PrivateDbSubnetA
+      - !Ref PrivateDbSubnetB
+    Tags:
+      - Key: Name
+        Value: DBSubnetGroup
+Outputs:
+ RDSSubnetGroupName:
+   Value: !Ref RDSSubnetGroup
+   Export:
+     Name: RDSSubnetGroup
+ PrivateAppSubnetId:
+   Value: !Ref PrivateAppSubnet
+   Export:
+     Name: PrivateAppSubnetId
+ PublicWebSubnetId:
+   Value: !Ref PublicWebSubnet
+   Export:
+    Name: PublicWebSubnetId
+ PrivateDbSubnetAId:
+   Value: !Ref PrivateDbSubnetA
+   Export:
+    Name: PrivateDbSubnetAId
+ PrivateDbSubnetBId:
+   Value: !Ref PrivateDbSubnetB
+   Export:
+    Name: PrivateDbSubnetBId
+ DbSecurityGroupId:
+   Value: !Ref DbSecurityGroup
+   Export:
+    Name: DbSecurityGroupId
+ WebSecurityGroupId:
+   Value: !Ref WebSecurityGroup
+   Export:
+    Name: WebSecurityGroupId
+ AppSecurityGroupId:
+   Value: !Ref AppSecurityGroup
+   Export:
+    Name: AppSecurityGroupId      
+ VpcId:
+   Value: !Ref AssignmentVPC
+   Export:
+    Name: AssignmentVpcId
