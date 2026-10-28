@@ -1,0 +1,360 @@
+## EC2 section
+Parameters:
+
+#
+#  LatestAmiId:
+#    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+#    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  LatestUbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+  
+  DBName:
+    Type: String
+    Default: appdb
+    Description: Initial database name
+  
+  DBUsername:
+    Type: String
+    Default: admin
+    MinLength: 1
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+
+  MultiAZ:
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+# Resources section
+Resources:
+#RDS Database
+  MySQLDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      Engine: mysql
+      EngineVersion: "8.4.10"
+
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: !Ref MultiAZ
+      VPCSecurityGroups:
+        - !ImportValue DbSecurityGroupId
+
+      DBSubnetGroupName: !ImportValue RDSSubnetGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: false
+
+# EC2 Instances
+  AppServer:
+    Type: AWS::EC2::Instance
+    DependsOn: MySQLDatabase
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: t2.micro
+      KeyName: 3tierassignment
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true #only for testing, remove in production
+          DeviceIndex: 0
+          GroupSet:
+            - !ImportValue AppSecurityGroupId
+          SubnetId: !ImportValue PrivateAppSubnetId
+      Tags:
+        - Key: Name
+          Value: appserver
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          cat > /etc/profile.d/app-env.sh << EOF
+          export DBHOST="${MySQLDatabase.Endpoint.Address}"
+          export DBUSER="${DBUsername}"
+          export DBPASSWORD="${DBPassword}"
+          export DBNAME="${DBName}"
+          EOF
+
+          chmod 644 /etc/profile.d/app-env.sh
+          source /etc/profile.d/app-env.sh
+
+          # Update packages
+          apt-get update -y
+          apt-get upgrade -y
+
+          # Install curl and git
+          apt-get install -y curl git npm mariadb-client-core
+
+          # Create application directory
+          mkdir -p /opt/app
+          cd /opt/app
+
+          # Install Node.js 22
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+
+          # Install PM2 globally
+          npm install -g pm2
+          npm install mysql2 cors express
+          #npm install dotenv
+
+          # Create package.json
+          cat > package.json <<'EOF'
+          {
+           "name": "app-tier",
+           "version": "1.0.0",
+           "description": "",
+           "main": "index.js",
+           "scripts": {
+               "test": "echo \"Error: no test specified\" && exit 1"
+            },
+           "keywords": [],
+           "author": "",
+           "license": "ISC",
+           "dependencies": {
+           "cors": "^2.8.6",
+           "express": "^5.3.0",
+           "mysql2": "^3.24.6"
+           "devDependencies": {}
+          }
+          EOF
+
+          
+
+          # Create application
+          cat > server.js <<'EOF'
+          const express = require('express');
+          const mysql = require('mysql2');
+          const cors = require('cors');
+
+          const app = express();
+          const PORT = 5000;
+
+          // Enable CORS so the frontend can communicate with the backend
+          app.use(cors());
+          app.use(express.json());
+
+          // Configure Database Connection
+          const db = mysql.createConnection({
+          host: process.env.DBHOST,
+          user: process.env.DBUSER,      // Replace with your MySQL username
+          password: process.env.DBPASSWORD,  // Replace with your MySQL password
+          database: process.env.DBNAME
+          });
+
+          // Connect to Database
+          db.connect((err) => {
+          if (err) {
+             console.error('Database connection failed: ' + err.stack);
+          return;
+          }
+          console.log('Connected to MySQL database.');
+          });
+
+          // API Endpoint to fetch users (Business Logic & Query)
+          app.get('/api/users', (req, res) => {
+          const sqlQuery = 'SELECT id, name, email FROM users';
+
+          db.query(sqlQuery, (err, results) => {
+          if (err) {
+            return res.status(500).json({ error: 'Database query failed' });
+           }
+          res.json(results);
+           });
+          });
+
+          // Start Server
+          app.listen(PORT, () => {
+          console.log(`Application layer running on http://localhost:${!PORT}`);
+          });
+          EOF
+
+          # Start application
+          pm2 start server.js --name app-tier
+          pm2 save
+#EC2 Webserver
+  WebServer:
+    Type: AWS::EC2::Instance
+    DependsOn: AppServer
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: t2.micro
+      KeyName: 3tierassignment
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !ImportValue WebSecurityGroupId
+          SubnetId: !ImportValue PublicWebSubnetId
+      Tags:
+        - Key: Name
+          Value: webserver
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          # Update packages
+          apt-get update -y
+          apt-get upgrade -y
+
+          # Install curl and git
+          apt-get install -y curl git
+
+          # Install Node.js 22
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+
+          # Install PM2 globally
+          npm install -g pm2
+
+          # Create application directory
+          mkdir -p /opt/app
+          cd /opt/app
+
+          # Create package.json
+          cat > package.json <<'EOF'
+          {
+           "name": "web-forwarder",
+           "version": "1.0.0",
+           "description": "",
+            "main": "index.js",
+            "scripts": {
+              "test": "echo \"Error: no test specified\" && exit 1"
+            },
+           "keywords": [],
+           "author": "",
+           "license": "ISC",
+           "dependencies": {
+           "express": "^5.3.0"
+             }
+          }
+          EOF
+
+          # Install Express
+          npm install express
+
+          # Create application  to act as a forwarder service to the app tier.
+          cat > server.js <<'EOF'
+          const express = require('express');
+          const path = require('path');
+          const app = express();
+          // 1. Serve your static HTML file to the browser
+          app.use(express.static(path.join(__dirname, 'public')));
+          // 2. Create a local endpoint that calls the app layer privately
+          app.get('/local-users', async (req, res) => {
+            try {
+              const response = await fetch('http://${AppServer.PrivateIp}:5000/api/users');
+              const data = await response.json();
+              res.json(data);
+            } catch (error) {
+              console.error('Error fetching users:', error);
+              res.status(500).json({ error: 'Failed to fetch users' });
+            }
+          });            
+          app.listen(80, () => {
+            console.log('Listening on port 80');
+          });
+          EOF
+
+          # Start application
+          pm2 start server.js --name web-tier
+          pm2 save
+          
+          # Create webpage application directory
+          mkdir -p /opt/app/public
+          cd /opt/app/public
+
+          cat > index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>3-Tier App Client</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f9; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+              th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
+              th { background-color: #007BFF; color: white; }
+            </style>
+          </head>
+          <body>
+          <h1>User Directory</h1>
+          <button onclick="fetchUsers()">Load Users</button>
+          <table>
+          <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+            </tr>
+          </thead>
+          <tbody id="user-table-body">
+            <tr>
+                <td colspan="3">No data loaded yet. Click the button above.</td>
+            </tr>
+          </tbody>
+          </table>
+          <script>
+          async function fetchUsers() 
+          {
+            const tableBody = document.getElementById('user-table-body');
+            try 
+              {
+                // Call the application layer API
+                const response = await fetch('/local-users');
+                const users = await response.json();
+
+                // Clear existing table content
+                tableBody.innerHTML = '';
+
+                // Dynamically populate the presentation layer
+                users.forEach(user => 
+                 {
+                    const row = `<tr>
+                        <td>${!user.id}</td>
+                        <td>${!user.name}</td>
+                        <td>${!user.email}</td>
+                    </tr>`;
+                    tableBody.innerHTML += row;
+                  });
+              } 
+                catch (error) 
+               {
+                    console.error('Error fetching data:', error);
+                    tableBody.innerHTML = `<tr><td colspan="3" style="color: red;">Failed to load data from backend.</td></tr>`;
+               }
+          }
+          </script>
+          </body>
+          </html>
+          EOF
+
+Outputs:
+  DatabaseEndpoint:
+    Description: RDS Endpoint
+    Value: !GetAtt MySQLDatabase.Endpoint.Address
+  DatabasePort:
+    Description: MySQL Port
+    Value: !GetAtt MySQLDatabase.Endpoint.Port
+  DatabaseName:
+    Value: !Ref DBName

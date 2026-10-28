@@ -2,6 +2,11 @@
 Metadata:
   AWSToolsMetrics:
     IaC_Generator: "arn:aws:cloudformation:eu-west-1:299954288833:generatedTemplate/8d229b60-8b5e-48d6-b116-41c28d82ce41"
+Parameters:
+  SSHLocation:
+    Type: String
+    Default: 10.10.19.23/32
+    Description: The IP address range that can be used to SSH to the EC2 instances
 Resources:
  AssignmentVPC:
   UpdateReplacePolicy: "Delete"
@@ -102,6 +107,16 @@ Resources:
    GatewayId: !Ref InternetGateway
    RouteTableId: !Ref PublicRouteTable
    DestinationCidrBlock: "0.0.0.0/0"
+ PrivateRouteEntry1:                    #this needs to be open for the app server to access the internet for updates and package downloads
+  DependsOn:
+  - AssignmentVPCGatewayAttachment
+  UpdateReplacePolicy: "Delete"
+  Type: "AWS::EC2::Route"
+  DeletionPolicy: "Delete"
+  Properties:
+   GatewayId: !Ref InternetGateway
+   RouteTableId: !Ref PrivateRouteTable
+   DestinationCidrBlock: "0.0.0.0/0"
  PublicSubnetAssociation:
   Type: AWS::EC2::SubnetRouteTableAssociation
   Properties:
@@ -142,6 +157,10 @@ Resources:
      IpProtocol: "tcp"
      FromPort: 443
      ToPort: 443
+   - CidrIp: !Ref SSHLocation  #temporary for SSH access, remove in production
+     IpProtocol: "tcp"
+     FromPort: 22
+     ToPort: 22
  AppSecurityGroup:
   UpdateReplacePolicy: "Delete"
   Type: "AWS::EC2::SecurityGroup"
@@ -159,9 +178,10 @@ Resources:
      FromPort: 5000
      SourceSecurityGroupId: !Ref WebSecurityGroup
      ToPort: 5000
-   SecurityGroupEgress:
-   - IpProtocol: "-1"
-     CidrIp: "0.0.0.0/0"
+   - IpProtocol: "tcp"    #allow SSH access from the web server for management, remove in production
+     FromPort: 22
+     SourceSecurityGroupId: !Ref WebSecurityGroup
+     ToPort: 22
  DbSecurityGroup:
   UpdateReplacePolicy: "Delete"
   Type: "AWS::EC2::SecurityGroup"
