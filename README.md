@@ -43,27 +43,47 @@ To test CloudFormation I developed a a simple 3 tier application
 
 A browser session to the IP address of the web tier will return a page with a load users button. Clicking this will result in a query to the database and records returned to the page.
 
-1. Create basic Web app.
-The code/files for the web application are in src\3tierapp. I got initial code from Google AI for for webfront-end and nodejs app running on pm2 (node 1) querying a mysql database on a database server (node 2).  This was expanded to a full 3 tier app , with a server script on webnode calling an app node. This was tested on homelab Ubuntu VMs with the network isolation blocking all requests to the app and db tier except from the webserver or app node respectively on defined ports.
-
-
-2. Create Networking Components. 
+1. Create Networking Components. 
 I created the VPC and associated components on AWS console initially. Then used IaC generator to scan applicable resources and created the Template file. Then edited the file to make a consistent naming scheme for the components. I used Co-Pilot to ID sections of the IaC generated script that were unnecessary and updated the file.
 
 * Note : I wish to keep the VPC/subnets/security group creation seperate from the EC2 
 instances and application setup. This is in line with AWS best practices (see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html#organizingstacks) 
 
+* From the original layout I found that RDS Database required 2 Subnets, each in an Availability Zone, irrespective of if I was replicating the database across them  see [AWS Docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html). I've updated the network to that in Pull request #16 
+* Further update was required to allow me pass my IP address as a paremetrer to the Network script , so the Web Security Group could add that to the inbound rules for port 22. See Pull Request #17
+
 * The resulting Template file is CF-NetworkStack-Assignment2.yaml. Apply this as follows : 
 ````
 aws cloudformation create-stack ^
-  --stack-name CF-NetworkStack-Assignment2 ^
-  --template-body file://CF-NetworkStack-Assignment2.yaml ^
-  --region eu-west-1
+--stack-name CF-NetworkStack-Assignment2 ^
+--template-body file://CF-NetworkStack-Assignment2.yaml ^
+--parameters ParameterKey=SSHLocation,ParameterValue=xx.xx.xxx.xx/32 ^
+--region eu-west-1
 ````
 
 ![AssignmentVPC](images/AssignmentVPC.jpg)
 
 
+2. Create basic Web app.
+The code/files for the web application are in src\3tierapp. I got initial code from Google AI for for webfront-end and nodejs app running on pm2 (node 1) querying a mysql database on a database server (node 2).  This was expanded to a full 3 tier app , with a server script on webnode forwarding to the app tier. This was tested on homelab Ubuntu VMs with the network isolation blocking all requests to the app and db tier except from the webserver or app node respectively on defined ports.
+
+3. Create Cloud Formation Scripts for EC2/Database. 
+The initial template structure was listed in an AWS article [here](https://repost.aws/articles/ARGpERJ3jISbOAlnmfVUsvMQ/building-a-secure-and-scalable-three-tier-architecture-on-aws-using-cloudformation) and also from a AI prompt. The app in this case will be based on the code in src\3tierapp in this repo, but in this case the scripts for the nodejs components were created on the fly during standup of the EC2 instances. 
+
+![Screenshot of webpage](images/3tierAppWebPage.png)
+
+## ToDo/Issues
+ - Using the webserver for SSH access is not recommended. Look at a bastion server.  
+ - Incorrect sequencing the creation of the nodejs components caused the startup to fail.
+ - Database setup is not automated. I need to ssh to the app node, login to mysql and run [init.sql](src/3tierapp/database/init.sql)
+ - To enable updates to the mid-tier required an external IP address, and ensure that the "app-sg-assignment1" has an outbound rule allowing access. 
+ - The external IP of the webserver is subject to change. For a production system and elastic IP and associated gateway is needed. 
+ - The environment is not a high availability configuration.
+ - The website is not secured with a SSL cert. 
+
+
+## Co-Pilot/Google AI  prompts
+Generate a basic cloud formation script that creates a basic flask based website and a rds database backend 
 
 ## Contact
 Feel free to contact mailto:L00213529@atu.ie with questions or suggestions.
