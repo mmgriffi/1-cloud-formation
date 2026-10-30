@@ -5,15 +5,35 @@ Metadata:
 Parameters:
   SSHLocation:
     Type: String
-    Default: 10.10.19.23/32
+    Default: 10.10.19.23
     Description: The IP address range that can be used to SSH to the EC2 instances
+    # before you run use Powershell command (Invoke-RestMethod -Uri "https://api.ipify.org") to get your public IP address.
+  VPCCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: The CIDR block for the VPC.
+    AllowedPattern: ^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})/(1[6-9]|2[0-8])$
+    ConstraintDescription: Enter a valid CIDR block such as 10.0.0.0/16.
+    # This parameter is used to specify the CIDR block for the VPC.
+  DatabasePort:
+    Type: Number
+    Default: 3306
+    Description: MySQL port
+  HTTPPort:
+    Type: Number
+    Default: 8080
+    Description: HTTP port
+  AppPort:
+    Type: Number
+    Default: 5000
+    Description: Application port
 Resources:
  AssignmentVPC:
   UpdateReplacePolicy: "Delete"
   Type: "AWS::EC2::VPC"
   DeletionPolicy: "Delete"
   Properties:
-   CidrBlock: "10.0.0.0/16"
+   CidrBlock: !Ref VPCCidr
    EnableDnsSupport: true
    EnableDnsHostnames: true
    Tags:
@@ -41,8 +61,11 @@ Resources:
   Properties:
    MapPublicIpOnLaunch: true
    VpcId: !Ref AssignmentVPC
-   AvailabilityZone: "eu-west-1b"
-   CidrBlock: "10.0.1.0/24"
+   AvailabilityZone: !Select [0, !GetAZs '']
+   #removed hardcoded region and replaced with !GetAZs '' to get the first AZ in the region where the stack is deployed
+   CidrBlock: !Select
+   - 0
+   - !Cidr [!Ref VPCCidr, 4, 8]
    Tags:
    - Value: "PublicWebSubnet"
      Key: "Name"
@@ -52,8 +75,10 @@ Resources:
   DeletionPolicy: "Delete"
   Properties:
    VpcId: !Ref AssignmentVPC
-   AvailabilityZone: "eu-west-1b"
-   CidrBlock: "10.0.10.0/24"
+   AvailabilityZone: !Select [0, !GetAZs '']
+   CidrBlock: !Select
+   - 1
+   - !Cidr [!Ref VPCCidr, 4, 8]
    Tags:
    - Value: "PrivateAppSubnet"
      Key: "Name"
@@ -63,8 +88,10 @@ Resources:
   DeletionPolicy: "Delete"
   Properties:
    VpcId: !Ref AssignmentVPC
-   AvailabilityZone: "eu-west-1a"
-   CidrBlock: "10.0.20.0/24"
+   AvailabilityZone: !Select [0, !GetAZs '']
+   CidrBlock: !Select
+   - 2
+   - !Cidr [!Ref VPCCidr, 4, 8]
    Tags:
    - Value: "PrivateDbSubnetA"
      Key: "Name"
@@ -74,8 +101,11 @@ Resources:
   DeletionPolicy: "Delete"
   Properties:
    VpcId: !Ref AssignmentVPC
-   AvailabilityZone: "eu-west-1b"
-   CidrBlock: "10.0.30.0/24"
+   AvailabilityZone: !Select [1, !GetAZs '']
+   # removed hardcoded region and replaced with !GetAZs '' to get the second AZ as required by RDS SQL database. 
+   CidrBlock: !Select
+   - 3
+   - !Cidr [!Ref VPCCidr, 4, 8]
    Tags:
    - Value: "PrivateDbSubnetB"
      Key: "Name"
@@ -151,8 +181,8 @@ Resources:
    SecurityGroupIngress:
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "tcp"
-     FromPort: 80
-     ToPort: 80
+     FromPort: !Ref HTTPPort
+     ToPort: !Ref HTTPPort
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "tcp"
      FromPort: 443
@@ -175,9 +205,9 @@ Resources:
    VpcId: !Ref AssignmentVPC
    SecurityGroupIngress:
    - IpProtocol: "tcp"
-     FromPort: 5000
+     FromPort: !Ref AppPort
      SourceSecurityGroupId: !Ref WebSecurityGroup
-     ToPort: 5000
+     ToPort: !Ref AppPort
    - IpProtocol: "tcp"    #allow SSH access from the web server for management, remove in production
      FromPort: 22
      SourceSecurityGroupId: !Ref WebSecurityGroup
@@ -195,9 +225,9 @@ Resources:
    VpcId: !Ref AssignmentVPC
    SecurityGroupIngress:
    - IpProtocol: "tcp"
-     FromPort: 3306
+     FromPort: !Ref DatabasePort
      SourceSecurityGroupId: !Ref AppSecurityGroup
-     ToPort: 3306
+     ToPort: !Ref DatabasePort
    SecurityGroupEgress:
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "-1"
@@ -248,3 +278,15 @@ Outputs:
    Value: !Ref AssignmentVPC
    Export:
     Name: AssignmentVpcId
+ DbPort:
+   Value: !Ref DatabasePort
+   Export:
+    Name: NetworkStack-DatabasePort
+ HTTPPort:
+   Value: !Ref HTTPPort
+   Export:
+    Name: NetworkStack-HTTPPort
+ AppPort:
+   Value: !Ref AppPort
+   Export:
+    Name: NetworkStack-AppPort
