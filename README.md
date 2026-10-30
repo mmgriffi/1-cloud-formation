@@ -54,20 +54,19 @@ instances and application setup. This is in line with AWS best practices (see ht
 * Expaning on the original layout I found that RDS Database required 2 Subnets, each in an Availability Zone, irrespective of if I was replicating the database across them  see [AWS Docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html). I've updated the network to that in Pull request #16 
 * Further update was required to allow me pass my IP address as a paremetrer to the Network script , so the Web Security Group could add that to the inbound rules for port 22. See Pull Request #17
 
-
-
-
-
 * The resulting Template file is [here](/infra/CF-NetworkStack-Assignment2.yaml). Apply this as follows : 
 ````
 aws cloudformation create-stack ^
 --stack-name CF-NetworkStack-Assignment2 ^
 --template-body file://CF-NetworkStack-Assignment2.yaml ^
 --parameters ^
- ParameterKey=SSHLocation,ParameterValue=XX.XX.XX.XX/32 ^
- ParameterKey=VPCCidr,ParameterValue=XX.XX.X.X/16 ^
---region eu-west-1
+ ParameterKey=SSHLocation,ParameterValue=xx.xx.xx.xx/32 ^
+ ParameterKey=VPCCidr,ParameterValue=xx.xx.xx.xx/16 ^
+--region eu-west-1 ^
+--parameters file://CF_3tier_parameters.json
 ````
+* Parameters common to both stacks are in [json file](/infra/CF_3tier_parameters.json)
+
 
 ![AssignmentVPC](images/AssignmentVPC.jpg)
 
@@ -107,14 +106,25 @@ aws cloudformation create-stack ^
 --parameters ^
 ParameterKey=DBUsername,ParameterValue=xxx ^
 ParameterKey=DBPassword,ParameterValue=xxxxxx ^
-ParameterKey=DBName,ParameterValue=xxxxx
+ParameterKey=DBName,ParameterValue=xxxxx ^
 ````
+* Parameters common to both stacks AWS Systems Manager Parameter Store. 
+
 
 ![Screenshot of webpage](images/3tierAppWebPage.png)
 
 4. **Script Improvements for portability, better availability.**
 * CF-NetworkStack-Assignment2.yaml :  User parameters define the VPCCidr, AppPort, HttpPort and Database Ports. These are applied to the relevant security groups. 
 * EC2_CloudFormation.yml : User parameters define the  database connection values as well as values for AppPort, HttpPort and Database ports. 
+* AWS Systems Manager Parameter Store : I have  parameters common to both scripts, but wanted flexibility to pass parameters inline as well. Parameter overrides won't allow you mix a json input file with inline commands. I decided to use the Parameter Store for the AppPort, HttpPort and Database port. 
+
+These can be referenced as in this example: 
+````  DBPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/DBPort
+    Description: MySQL port
+````
+
 
 ## ToDo/Issues
  - I'm using the webserver for SSH access is not recommended.(should use a bastion server)  
@@ -124,6 +134,7 @@ ParameterKey=DBName,ParameterValue=xxxxx
  - The external IP of the webserver is subject to change. For a production system and elastic IP and associated gateway is needed. 
  - The environment is not a high availability configuration.
  - The website is not secured with a SSL cert. 
+ - Database username/password are passed as inline parameters. It's possible to change to AWS Parameter store as secure string, but need further work to set up IAM roles that can read the parameters from within the UserData setup. 
  - ~~ Network configuration has hardcoded values for VPC, subnets.~~ This has been replaced with a VPCCidr parameter and I derive the subnet CIDR ranges from that . See [CF-NetworkStack-Assignment2.yaml](infra/CF-NetworkStack-Assignment2.yaml)
 
 

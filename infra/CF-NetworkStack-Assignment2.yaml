@@ -7,25 +7,32 @@ Parameters:
     Type: String
     Default: 10.10.19.23
     Description: The IP address range that can be used to SSH to the EC2 instances
-    # before you run use Powershell command (Invoke-RestMethod -Uri "https://api.ipify.org") to get your public IP address.
+    # before you run use Powershell command (Invoke-RestMethod -Uri "https://api.ipify.org") to get your public IP address. Use that in your input. 
+  # This parameter is used to specify the CIDR block for the VPC.
   VPCCidr:
     Type: String
     Default: 10.0.0.0/16
     Description: The CIDR block for the VPC.
     AllowedPattern: ^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})/(1[6-9]|2[0-8])$
     ConstraintDescription: Enter a valid CIDR block such as 10.0.0.0/16.
-    # This parameter is used to specify the CIDR block for the VPC.
-  DatabasePort:
-    Type: Number
-    Default: 3306
+  ##These parameters common to both Stacks are moved AWS Parameter Store ()
+  DBPort:
+    #Type: Number
+    #Default: 3306
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/DBPort
     Description: MySQL port
-  HTTPPort:
-    Type: Number
-    Default: 8080
+  HttpPort:
+    #Type: Number
+    #Default: 8080
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/HttpPort
     Description: HTTP port
   AppPort:
-    Type: Number
-    Default: 5000
+    #Type: Number
+    #Default: 5000
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/AppPort
     Description: Application port
 Resources:
  AssignmentVPC:
@@ -181,8 +188,8 @@ Resources:
    SecurityGroupIngress:
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "tcp"
-     FromPort: !Ref HTTPPort
-     ToPort: !Ref HTTPPort
+     FromPort: !Ref HttpPort
+     ToPort: !Ref HttpPort
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "tcp"
      FromPort: 443
@@ -225,9 +232,9 @@ Resources:
    VpcId: !Ref AssignmentVPC
    SecurityGroupIngress:
    - IpProtocol: "tcp"
-     FromPort: !Ref DatabasePort
+     FromPort: !Ref DBPort
      SourceSecurityGroupId: !Ref AppSecurityGroup
-     ToPort: !Ref DatabasePort
+     ToPort: !Ref DBPort
    SecurityGroupEgress:
    - CidrIp: "0.0.0.0/0"
      IpProtocol: "-1"
@@ -279,13 +286,13 @@ Outputs:
    Export:
     Name: AssignmentVpcId
  DbPort:
-   Value: !Ref DatabasePort
+   Value: !Ref DBPort
    Export:
-    Name: NetworkStack-DatabasePort
- HTTPPort:
-   Value: !Ref HTTPPort
+    Name: NetworkStack-DBPort
+ HttpPort:
+   Value: !Ref HttpPort
    Export:
-    Name: NetworkStack-HTTPPort
+    Name: NetworkStack-HttpPort
  AppPort:
    Value: !Ref AppPort
    Export:
