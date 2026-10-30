@@ -11,7 +11,6 @@ Parameters:
     Type: String
     Default: appdb
     Description: Initial database name
-  
   DBUsername:
     Type: String
     Default: admin
@@ -20,17 +19,24 @@ Parameters:
     Type: String
     NoEcho: true
     MinLength: 8
+  ##These parameters common to both Stacks are moved AWS Parameter Store ()
   DBPort:
-    Type: String
-    Default: 3306
-    MinLength: 1
+    #Type: Number
+    #Default: 3306
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/DBPort
+    Description: MySQL port
   HttpPort:
-    Type: String
-    Default: 8080
+    #Type: Number
+    #Default: 8080
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/HttpPort
     Description: HTTP port
   AppPort:
-    Type: String
-    Default: 5000 
+    #Type: Number
+    #Default: 5000
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/AppPort
     Description: Application port
 
   DBInstanceClass:
@@ -59,6 +65,8 @@ Resources:
       DBName: !Ref DBName
       MasterUsername: !Ref DBUsername
       MasterUserPassword: !Ref DBPassword
+      #MasterUsername: '{{resolve:ssm-secure:/shared/db/DBUsername}}'
+      #MasterUserPassword: '{{resolve:ssm-secure:/shared/db/DBPassword}}'
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref AllocatedStorage
       StorageType: gp3
