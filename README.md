@@ -37,49 +37,94 @@ aws s3 cp src/ s3://atu-l00213529-cloudformation/ --recursive --region eu-west-1
 ## Part 2 - Create a 3 tier application (webserver, appnode + database)
 To test CloudFormation I developed a a simple 3 tier application
 
-- Web tier using node js and express. A web server on port 80 will make a call to the mid tier app via port 5000.
-- App Tier using node js and express. Listening on port 5000, this will query MySQL Instance on port 3306.
-- DB Tier using MySQL. Running on port 3306. Has a simple database with 2 records.
+|Layer | Server | Subnet |Description |
+|---|---|---|---|
+|Web|webserver|PublicWebSubnet|using node js and express. A web server on port 8080 will make a call to the App tier app via port 5000 using a local nodejs script|
+|App|appserver|PrivateAppSubnet|using node js and express. Listening on port 5000, this will query MySQL Instance on port 3306 on the Dbtier. Simple function to retrieve records |
+|DB|RDS MySQL Instance| This is Running on port 3306. Has a simple "company_db" database  with 2 records.|
 
-A browser session to the IP address of the web tier will return a page with a load users button. Clicking this will result in a query to the database and records returned to the page.
+A browser session to the IP address of the web tier will return a page with a load users button. Clicking this will result in a query to the database and records returned to the page. 
 
 1. Create Networking Components. 
 I created the VPC and associated components on AWS console initially. Then used IaC generator to scan applicable resources and created the Template file. Then edited the file to make a consistent naming scheme for the components. I used Co-Pilot to ID sections of the IaC generated script that were unnecessary and updated the file.
 
 * Note : I wish to keep the VPC/subnets/security group creation seperate from the EC2 
-instances and application setup. This is in line with AWS best practices (see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html#organizingstacks) 
+instances and application setup. This is in line with AWS best practices (see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html#organizingstacks) . As the network components here incurs no cost , it is not neccessary to remove them after testing like EC2 or RDS databases. 
 
-* From the original layout I found that RDS Database required 2 Subnets, each in an Availability Zone, irrespective of if I was replicating the database across them  see [AWS Docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html). I've updated the network to that in Pull request #16 
+* Expaning on the original layout I found that RDS Database required 2 Subnets, each in an Availability Zone, irrespective of if I was replicating the database across them  see [AWS Docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html). I've updated the network to that in Pull request #16 
 * Further update was required to allow me pass my IP address as a paremetrer to the Network script , so the Web Security Group could add that to the inbound rules for port 22. See Pull Request #17
 
-* The resulting Template file is CF-NetworkStack-Assignment2.yaml. Apply this as follows : 
+
+
+
+
+* The resulting Template file is [here](/infra/CF-NetworkStack-Assignment2.yaml). Apply this as follows : 
 ````
 aws cloudformation create-stack ^
 --stack-name CF-NetworkStack-Assignment2 ^
 --template-body file://CF-NetworkStack-Assignment2.yaml ^
---parameters ParameterKey=SSHLocation,ParameterValue=xx.xx.xxx.xx/32 ^
+--parameters ^
+ ParameterKey=SSHLocation,ParameterValue=XX.XX.XX.XX/32 ^
+ ParameterKey=VPCCidr,ParameterValue=XX.XX.X.X/16 ^
 --region eu-west-1
 ````
 
 ![AssignmentVPC](images/AssignmentVPC.jpg)
 
+Component|Name|Notes|
+|---|---|---|
+|VPC|AssignmentVPC |Paremeter “ VPCCidr “ is passed as the CIDR block value. Script contains basic validation. Default 10.10.0.0/16|
+|Subnet|PublicWebSubnet|CIDR derived from VPCCirdr using a function e.g 10.10.0.0/24 |
+|Subnet|PrivateAppSubnet|CIDR derived from VPCCirdr. e.g  10.10.1.0/24 |
+|Subnet|PrivateDbSubnetA |CIDR is derived from VPCCirdr.e.g  10.10.2.0/24 |
+|Subnet|PrivateDbSubnetB|CIDR is derived from VPCCirdr. e.g  10.10.3.0/24 . Create in different Availability Zone to DbSubnetA – a requirement of RDS SQL.|
+|InternetGateway|InternetGateway |VPC is attached to this. |
+|Route Table|PublicRouteTable|route table with route to Internet Gateway for internet. Associated with PublicWebSubnet|
+|Route Table|PrivateRouteTable|route table with route to Internet Gateway for internet. Associated with PrivateAppSubnet and PrivateDbSubetA + B|
+|Security Group|WebSecurityGroup|"Inbound rules for 22 (SSH from IP only)| 8080 (user parameter)|
+|Security Group|AppSecurityGroup|"Inbound rule for 22 (SSH from web security group) | 5000 (user parameter).|
+|Security Group|DbSecurityGroup|Inbound rule for 3306 ( from app security group)| 
 
-2. Create basic Web app.
-The code/files for the web application are in src\3tierapp. I got initial code from Google AI for for webfront-end and nodejs app running on pm2 (node 1) querying a mysql database on a database server (node 2).  This was expanded to a full 3 tier app , with a server script on webnode forwarding to the app tier. This was tested on homelab Ubuntu VMs with the network isolation blocking all requests to the app and db tier except from the webserver or app node respectively on defined ports.
 
-3. Create Cloud Formation Scripts for EC2/Database. 
-The initial template structure was listed in an AWS article [here](https://repost.aws/articles/ARGpERJ3jISbOAlnmfVUsvMQ/building-a-secure-and-scalable-three-tier-architecture-on-aws-using-cloudformation) and also from a AI prompt. The app in this case will be based on the code in src\3tierapp in this repo, but in this case the scripts for the nodejs components were created on the fly during standup of the EC2 instances. 
+2. **Create basic Web app.**
+The code/files for the web application are in src\3tierapp. I got initial code from Google AI. 
+- This has a webfront-end, node.js app running under the pm2 process manager. Web UI will call nodejs and query the mysql database on a database server.  
+- I expanded this to a full 3 tier app , with a script on webserver forwarding calls to the appserver to query the SQL database. 
+- For learning, I tested this on 3 homelab Ubuntu VMs with the same network isolation/security groups as the planned VPC.
+
+3. **Create Cloud Formation Scripts for EC2 and RDS Database.** 
+* The initial template structure was listed in an AWS article [here](https://repost.aws/articles/ARGpERJ3jISbOAlnmfVUsvMQ/building-a-secure-and-scalable-three-tier-architecture-on-aws-using-cloudformation).  In this case the app will be based on the code in src\3tierapp in this repo, but in this case the scripts for the nodejs components were created on the fly during standup of the EC2 instances. 
+
+* The script is [here](/infra/EC2_CloudFormation.yml)
+
+The script is applied as follows 
+
+````
+aws cloudformation create-stack ^
+--stack-name CF-EC2Stack-Assignment2 ^
+--template-body file://EC2_CloudFormation.yml ^
+--region eu-west-1 ^
+--parameters ^
+ParameterKey=DBUsername,ParameterValue=xxx ^
+ParameterKey=DBPassword,ParameterValue=xxxxxx ^
+ParameterKey=DBName,ParameterValue=xxxxx
+````
 
 ![Screenshot of webpage](images/3tierAppWebPage.png)
 
+4. **Script Improvements for portability, better availability.**
+* CF-NetworkStack-Assignment2.yaml :  User parameters define the VPCCidr, AppPort, HttpPort and Database Ports. These are applied to the relevant security groups. 
+* EC2_CloudFormation.yml : User parameters define the  database connection values as well as values for AppPort, HttpPort and Database ports. 
+
 ## ToDo/Issues
- - Using the webserver for SSH access is not recommended. Look at a bastion server.  
- - Incorrect sequencing the creation of the nodejs components caused the startup to fail.
- - Database setup is not automated. I need to ssh to the app node, login to mysql and run [init.sql](src/3tierapp/database/init.sql)
+ - I'm using the webserver for SSH access is not recommended.(should use a bastion server)  
+ - ~~ Incorrect sequencing the creation of the nodejs components caused the startup to fail.~~ This has been corrected. 
+ - ~~ Database setup is not automated. I need to ssh to the app node, login to mysql and run [init.sql](src/3tierapp/database/init.sql) ~~ This has been corrected
  - To enable updates to the mid-tier required an external IP address, and ensure that the "app-sg-assignment1" has an outbound rule allowing access. 
  - The external IP of the webserver is subject to change. For a production system and elastic IP and associated gateway is needed. 
  - The environment is not a high availability configuration.
  - The website is not secured with a SSL cert. 
+ - ~~ Network configuration has hardcoded values for VPC, subnets.~~ This has been replaced with a VPCCidr parameter and I derive the subnet CIDR ranges from that . See [CF-NetworkStack-Assignment2.yaml](infra/CF-NetworkStack-Assignment2.yaml)
 
 
 ## Co-Pilot/Google AI  prompts
