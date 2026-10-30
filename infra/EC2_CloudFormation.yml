@@ -65,8 +65,6 @@ Resources:
       DBName: !Ref DBName
       MasterUsername: !Ref DBUsername
       MasterUserPassword: !Ref DBPassword
-      #MasterUsername: '{{resolve:ssm-secure:/shared/db/DBUsername}}'
-      #MasterUserPassword: '{{resolve:ssm-secure:/shared/db/DBPassword}}'
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref AllocatedStorage
       StorageType: gp3
@@ -399,3 +397,8 @@ Outputs:
     Value: !Sub
       - "http://${IPAddress}:${HttpPort}"
       - IPAddress: !GetAtt WebServer.PublicIp
+  WebServerInstanceId:
+    Description: Web Server Instance ID
+    Value: !Ref WebServer
+    Export:
+      Name: !Sub "${AWS::StackName}-WebServerInstanceId"

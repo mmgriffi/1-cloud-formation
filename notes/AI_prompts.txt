@@ -1,0 +1,13 @@
+
+# I used this when I wanted to use an Elastic IP. I have a domain name that I can associate with the IP.  
+Review the attached CloudFormation templates.
+I want to keep the existing EC2 and RDS resources unchanged.
+Create a new CloudFormation stack that allocates and associates an Elastic IP with the existing WebServer EC2 instance.
+
+Requirements:
+- Use Export/ImportValue between stacks.
+- Show the Outputs that must be added to the original stack.
+- Generate a complete EIP stack with Parameters, Resources, and Outputs.
+
+
+

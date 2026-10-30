@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Assign Elastic IP to existing Web Server
+
+Parameters:
+
+  EC2StackName:
+    Type: String
+    Default: CF-EC2Stack-Assignment2
+    Description: Name of the EC2 stack exporting WebServerInstanceId
+  HttpPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/HttpPort
+    Description: HTTP port
+  DNSName:
+    Type: String
+    Default: cluen.mynetgear.com
+    Description: No-IP generated DNS host associated with the Elastic IP. 
+
+Resources:
+  WebServerEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  WebServerEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt WebServerEIP.AllocationId
+      InstanceId:
+        Fn::ImportValue:
+          !Sub "${EC2StackName}-WebServerInstanceId"
+
+Outputs:
+
+  ElasticIPAddress:
+    Description: Elastic IP assigned to Web Server
+    Value: !Ref WebServerEIP
+
+  ElasticIPAllocationId:
+    Description: Allocation ID of Elastic IP
+    Value: !GetAtt WebServerEIP.AllocationId
+  WebAppIPURL:
+    Description: URL of the web application
+    Value: !Sub
+      - "http://${IPAddress}:${HttpPort}"
+      - IPAddress: !Ref WebServerEIP
+  AssociatedInstanceId:
+    Description: Instance associated with Elastic IP
+    Value:
+      Fn::ImportValue:
+        !Sub "${EC2StackName}-WebServerInstanceId"
+  WebAppURL:
+    Description: URL of the web application
+    Value: !Sub
+      - "http://${IPAddress}:${HttpPort}"
+      - IPAddress: !Ref DNSName
