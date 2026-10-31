@@ -1,0 +1,779 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Core Compute and Database Infrastructure Stack - High Availability Static Multi-AZ Deployment'
+
+Parameters:
+  LatestUbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+  
+  DBName:
+    Type: String
+    Default: appdb
+    Description: Initial database name
+  DBUsername:
+    Type: String
+    Default: admin
+    MinLength: 1
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  DBPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/DBPort
+    Description: MySQL port
+  HttpPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/HttpPort
+    Description: HTTP port
+  AppPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/AppPort
+    Description: Application port
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+
+  MultiAZ:
+    Type: String
+    Default: 'true' # Enforced True for High Availability
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Resources:
+  # =========================================================================
+  # RELATIONAL DATABASE CLUSTER (MULTI-AZ CO-RESIDENCE)
+  # =========================================================================
+  MySQLDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      Engine: mysql
+      EngineVersion: "8.4.10"
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: !Ref MultiAZ
+      VPCSecurityGroups:
+        - !ImportValue DbSecurityGroupId
+      DBSubnetGroupName: !ImportValue RDSSubnetGroup
+      Port: !Ref DBPort
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: false
+
+  # =========================================================================
+  # LOAD BALANCERS AND TARGET GROUPS
+  # =========================================================================
+  # PUBLIC FRONTEND LOAD BALANCER
+  PublicWebALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: public-web-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !ImportValue PublicWebSubnetId
+        - !ImportValue PublicWebSubnetBId
+      SecurityGroups:
+        - !ImportValue WebSecurityGroupId
+
+  PublicWebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !ImportValue AssignmentVpcId
+      Port: !Ref HttpPort
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /
+      HealthCheckPort: !Ref HttpPort
+      Targets:
+        - Id: !Ref WebServerAZ1
+        - Id: !Ref WebServerAZ2
+
+  PublicWebALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicWebALB
+      Port: !Ref HttpPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PublicWebTargetGroup
+
+  # INTERNAL APPLICATION LAYER LOAD BALANCER (APPIP PROXY BRIDGE)
+  InternalAppALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: private-app-alb # FIXED: Changed from internal-app-alb to obey AWS name exclusions
+      Scheme: internal
+      Type: application
+      Subnets:
+        - !ImportValue PrivateAppSubnetId
+        - !ImportValue PrivateAppSubnetBId
+      SecurityGroups:
+        - !ImportValue WebSecurityGroupId # Re-uses web SG profile so HTTP forwarders possess visibility
+
+  InternalAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !ImportValue AssignmentVpcId
+      Port: !Ref AppPort
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /api/users
+      HealthCheckPort: !Ref AppPort
+      Targets:
+        - Id: !Ref AppServerAZ1
+        - Id: !Ref AppServerAZ2
+
+  InternalAppALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref InternalAppALB
+      Port: !Ref AppPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref InternalAppTargetGroup
+
+  # =========================================================================
+  # APP SERVER LAYER (STATIC INSTANCES IN AVAILABILITY ZONE 1 & 2)
+  # =========================================================================
+  AppServerAZ1:
+    Type: AWS::EC2::Instance
+    DependsOn: MySQLDatabase
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: t2.micro
+      KeyName: 3tierassignment
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false # Protected behind the NAT Gateway
+          DeviceIndex: 0
+          GroupSet:
+            - !ImportValue AppSecurityGroupId
+          SubnetId: !ImportValue PrivateAppSubnetId
+      Tags:
+        - Key: Name
+          Value: appserver-az1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          cat > /etc/profile.d/app-env.sh <<EOF
+          export DBHOST="${MySQLDatabase.Endpoint.Address}"
+          export DBUSER="${DBUsername}"
+          export DBPASSWORD="${DBPassword}"
+          export DBPORT="${DBPort}"
+          export DBNAME="${DBName}"
+          export APPPORT="${AppPort}"
+          EOF
+
+          chmod 644 /etc/profile.d/app-env.sh
+          source /etc/profile.d/app-env.sh
+
+          # Update packages
+          apt-get update -y
+          apt-get upgrade -y
+          # Install curl and git
+          apt-get install -y curl git mariadb-client-core
+
+          cd /home/ubuntu
+          cat > init.sql <<'EOF'
+          -- this example SQL script creates a database and a table for a simple 3-tier application
+          -- runs in MySQL or MariaDB
+          CREATE DATABASE IF NOT EXISTS company_db;
+          USE company_db;
+          CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          email VARCHAR(100) NOT NULL UNIQUE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          -- Insert sample data
+          INSERT INTO users (name, email) VALUES 
+          ('Alice Smith', 'alice@example.com'),
+          ('Bob Jones', 'bob@example.com');
+          EOF
+          #aws s3 cp s3://my-bucket/init.sql /tmp/init.sql
+          sleep 10
+          # Run schema creation
+          mysql \
+           --host=$DBHOST \
+           --port=$DBPort \
+           --user=$DBUSER \
+           --password="$DBPASSWORD" \
+            < ./init.sql
+
+          # Create application directory
+          mkdir -p /opt/app
+          cd /opt/app
+          # Install Node.js 22
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+
+          #init will create package.json
+          npm init -y 
+          npm install mysql2 cors express
+          #npm install dotenv
+          # Install PM2 globally
+          npm install -g pm2
+
+          # Create application
+          sleep 10
+          cat > server.js <<'EOF'
+          const express = require('express');
+          const mysql = require('mysql2');
+          const cors = require('cors');
+
+          const app = express();
+          const APPPORT = process.env.APPPORT;
+          //const APPPORT = 5000
+          // Enable CORS so the frontend can communicate with the backend
+          app.use(cors());
+          app.use(express.json());
+
+          // Configure Database Connection
+          const db = mysql.createConnection({
+          host: process.env.DBHOST,
+          user: process.env.DBUSER,      // Replace with your MySQL username
+          password: process.env.DBPASSWORD,  // Replace with your MySQL password
+          database: process.env.DBNAME
+          });
+
+          // Connect to Database
+          db.connect((err) => {
+          if (err) {
+             console.error('Database connection failed: ' + err.stack);
+          return;
+          }
+          console.log('Connected to MySQL database.');
+          });
+
+          // API Endpoint to fetch users (Business Logic & Query)
+          app.get('/api/users', (req, res) => {
+          const sqlQuery = 'SELECT id, name, email FROM users';
+
+          db.query(sqlQuery, (err, results) => {
+          if (err) {
+            return res.status(500).json({ error: 'Database query failed' });
+           }
+          res.json(results);
+           });
+          });
+
+          // Start Server  - ${!APPPORT} needed to be escaped with a !. 
+          app.listen(APPPORT, () => {
+          console.log(`Application layer running on http://localhost:${!APPPORT}`);
+          });
+          EOF
+          echo "Web application setup complete... starting PM2." >> message.txt
+          # Start application using PM2 the process manager for node.js applications. Will run this as ubuntu.
+          # Startup isn't working. When sudo to ubuntu it's not picking up the environment variable for port 5000. 
+          #sudo -u ubuntu pm2 start server.js --name app-tier --update-env
+          #sudo -u ubuntu pm2 save
+          #sudo -u ubuntu pm2 startup systemd -u ubuntu --hp /home/ubuntu
+          #sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu 
+          
+          ###Temporarily - run it as root
+          pm2 start server.js --name app-tier
+
+  AppServerAZ2:
+    Type: AWS::EC2::Instance
+    DependsOn: MySQLDatabase
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: t2.micro
+      KeyName: 3tierassignment
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          GroupSet:
+            - !ImportValue AppSecurityGroupId
+          SubnetId: !ImportValue PrivateAppSubnetBId
+      Tags:
+        - Key: Name
+          Value: appserver-az2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          cat > /etc/profile.d/app-env.sh <<EOF
+          export DBHOST="${MySQLDatabase.Endpoint.Address}"
+          export DBUSER="${DBUsername}"
+          export DBPASSWORD="${DBPassword}"
+          export DBPORT="${DBPort}"
+          export DBNAME="${DBName}"
+          export APPPORT="${AppPort}"
+          EOF
+
+          chmod 644 /etc/profile.d/app-env.sh
+          source /etc/profile.d/app-env.sh
+
+          # Update packages
+          apt-get update -y
+          apt-get upgrade -y
+          # Install curl and git
+          apt-get install -y curl git mariadb-client-core
+
+          cd /home/ubuntu
+          cat > init.sql <<'EOF'
+          -- this example SQL script creates a database and a table for a simple 3-tier application
+          -- runs in MySQL or MariaDB
+          CREATE DATABASE IF NOT EXISTS company_db;
+          USE company_db;
+          CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          email VARCHAR(100) NOT NULL UNIQUE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          -- Insert sample data
+          INSERT INTO users (name, email) VALUES 
+          ('Alice Smith', 'alice@example.com'),
+          ('Bob Jones', 'bob@example.com');
+          EOF
+          #aws s3 cp s3://my-bucket/init.sql /tmp/init.sql
+          sleep 10
+          # Run schema creation
+          mysql \
+           --host=$DBHOST \
+           --port=$DBPort \
+           --user=$DBUSER \
+           --password="$DBPASSWORD" \
+            < ./init.sql
+
+          # Create application directory
+          mkdir -p /opt/app
+          cd /opt/app
+          # Install Node.js 22
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+          
+          #init will create package.json
+          npm init -y 
+          npm install mysql2 cors express
+          #npm install dotenv
+          # Install PM2 globally
+          npm install -g pm2
+
+          # Create application
+          sleep 10
+          cat > server.js <<'EOF'
+          const express = require('express');
+          const mysql = require('mysql2');
+          const cors = require('cors');
+
+          const app = express();
+          const APPPORT = process.env.APPPORT;
+          //const APPPORT = 5000
+          // Enable CORS so the frontend can communicate with the backend
+          app.use(cors());
+          app.use(express.json());
+
+          // Configure Database Connection
+          const db = mysql.createConnection({
+          host: process.env.DBHOST,
+          user: process.env.DBUSER,      // Replace with your MySQL username
+          password: process.env.DBPASSWORD,  // Replace with your MySQL password
+          database: process.env.DBNAME
+          });
+
+          // Connect to Database
+          db.connect((err) => {
+          if (err) {
+             console.error('Database connection failed: ' + err.stack);
+          return;
+          }
+          console.log('Connected to MySQL database.');
+          });
+
+          // API Endpoint to fetch users (Business Logic & Query)
+          app.get('/api/users', (req, res) => {
+          const sqlQuery = 'SELECT id, name, email FROM users';
+
+          db.query(sqlQuery, (err, results) => {
+          if (err) {
+            return res.status(500).json({ error: 'Database query failed' });
+           }
+          res.json(results);
+           });
+          });
+
+          // Start Server  - ${!APPPORT} needed to be escaped with a !. 
+          app.listen(APPPORT, () => {
+          console.log(`Application layer running on http://localhost:${!APPPORT}`);
+          });
+          EOF
+          echo "Web application setup complete... starting PM2." >> message.txt
+          # Start application using PM2 the process manager for node.js applications. Will run this as ubuntu.
+          # Startup isn't working. When sudo to ubuntu it's not picking up the environment variable for port 5000. 
+          #sudo -u ubuntu pm2 start server.js --name app-tier --update-env
+          #sudo -u ubuntu pm2 save
+          #sudo -u ubuntu pm2 startup systemd -u ubuntu --hp /home/ubuntu
+          #sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu 
+          
+          ###Temporarily - run it as root
+          pm2 start server.js --name app-tier
+
+  # =========================================================================
+  # WEB SERVER LAYER (STATIC INSTANCES IN AVAILABILITY ZONE 1 & 2)
+  # =========================================================================
+  # APPIP targets the Private DNS Name of the Internal ALB to balance compute queries safely.
+  WebServerAZ1:
+    Type: AWS::EC2::Instance
+    DependsOn: AppServerAZ1
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: t2.micro
+      KeyName: 3tierassignment
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !ImportValue WebSecurityGroupId
+          SubnetId: !ImportValue PublicWebSubnetId
+      Tags:
+        - Key: Name
+          Value: webserver-az1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          cat > /etc/profile.d/app-env.sh <<EOF
+          export APPPORT="${AppPort}"
+          export HTTPPORT="${HttpPort}"
+          export APPIP="${InternalAppALB.DNSName}"
+          EOF
+
+          chmod 644 /etc/profile.d/app-env.sh
+          source /etc/profile.d/app-env.sh
+          # Update packages
+          apt-get update -y
+          apt-get upgrade -y
+
+          # Install curl and git
+          apt-get install -y curl git 
+
+          # Create webpage and application directory
+          mkdir -p /opt/app/public
+          cd /opt/app/public
+
+          cat > index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>3-Tier App Client</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f9; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+              th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
+              th { background-color: #007BFF; color: white; }
+            </style>
+          </head>
+          <body>
+          <h1>User Directory</h1>
+          <button onclick="fetchUsers()">Load Users</button>
+          <table>
+          <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+            </tr>
+          </thead>
+          <tbody id="user-table-body">
+            <tr>
+                <td colspan="3">No data loaded yet. Click the button above.</td>
+            </tr>
+          </tbody>
+          </table>
+          <script>
+          async function fetchUsers() 
+          {
+            const tableBody = document.getElementById('user-table-body');
+            try 
+              {
+                // Call the application layer API
+                const response = await fetch('/local-users');
+                const users = await response.json();
+
+                // Clear existing table content
+                tableBody.innerHTML = '';
+
+                // Dynamically populate the presentation layer
+                users.forEach(user => 
+                 {
+                    const row = `<tr>
+                        <td>${!user.id}</td>
+                        <td>${!user.name}</td>
+                        <td>${!user.email}</td>
+                    </tr>`;
+                    tableBody.innerHTML += row;
+                  });
+              } 
+                catch (error) 
+               {
+                    console.error('Error fetching data:', error);
+                    tableBody.innerHTML = `<tr><td colspan="3" style="color: red;">Failed to load data from backend.</td></tr>`;
+               }
+          }
+          </script>
+          </body>
+          </html>
+          EOF
+
+          # Create application directory
+          #mkdir -p /opt/app
+          cd /opt/app
+
+          # Install Node.js 22
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+
+          #init will create package.json
+          npm init -y 
+
+          # Install Express
+          npm install express
+          # Install PM2 globally
+          npm install -g pm2
+
+          # Create application  to act as a forwarder service to the app tier.
+          cat > server.js <<'EOF'
+          const express = require('express');
+          const path = require('path');
+          const app = express();
+          const HTTPPORT = process.env.HTTPPORT
+          const APPPORT = process.env.APPPORT;
+          const APPIP = process.env.APPIP;
+          //const APPPORT = 5000
+          // 1. Serve your static HTML file to the browser
+          app.use(express.static(path.join(__dirname, 'public')));
+          // 2. Create a local endpoint that calls the app layer privately
+          // Note the way APPIP is written. The ! mark is not written to the final script.
+          app.get('/local-users', async (req, res) => {
+            try {
+              const response = await fetch(`http://${!APPIP}:${!APPPORT}/api/users`);
+              const data = await response.json();
+              res.json(data);
+            } catch (error) {
+              console.error('Error fetching users:', error);
+              res.status(500).json({ error: 'Failed to fetch users' });
+            }
+          });            
+          app.listen(HTTPPORT, () => {
+            console.log(`Listening on port ${!HTTPPORT}`);
+          });
+          EOF
+
+          echo "Web application setup complete... starting PM2." >> message.txt
+          # Start application using PM2 (a process manager for node.js applications). This needs to run in the application dir.
+          # This startup is not working correctly, trying to execute it under ubuntu context is still missing env variables.  
+          #sudo -u ubuntu pm2 start server.js --name web-tier --update-env
+          #sudo -u ubuntu pm2 save
+          #sudo pm2 startup systemd -u ubuntu --hp /home/ubuntu
+          #sudo pm2 startup systemd --hp /root
+          #env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu 
+          
+          ##### Temporarily run it as root #####
+          pm2 start server.js --name web-tier
+
+  WebServerAZ2:
+    Type: AWS::EC2::Instance
+    DependsOn: AppServerAZ2
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: t2.micro
+      KeyName: 3tierassignment
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !ImportValue WebSecurityGroupId
+          SubnetId: !ImportValue PublicWebSubnetBId
+      Tags:
+        - Key: Name
+          Value: webserver-az2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          cat > /etc/profile.d/app-env.sh <<EOF
+          export APPPORT="${AppPort}"
+          export HTTPPORT="${HttpPort}"
+          export APPIP="${InternalAppALB.DNSName}"
+          EOF
+
+          chmod 644 /etc/profile.d/app-env.sh
+          source /etc/profile.d/app-env.sh
+          # Update packages
+          apt-get update -y
+          apt-get upgrade -y
+
+          # Install curl and git
+          apt-get install -y curl git 
+
+          # Create webpage and application directory
+          mkdir -p /opt/app/public
+          cd /opt/app/public
+
+          cat > index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>3-Tier App Client</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f9; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+              th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
+              th { background-color: #007BFF; color: white; }
+            </style>
+          </head>
+          <body>
+          <h1>User Directory</h1>
+          <button onclick="fetchUsers()">Load Users</button>
+          <table>
+          <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+            </tr>
+          </thead>
+          <tbody id="user-table-body">
+            <tr>
+                <td colspan="3">No data loaded yet. Click the button above.</td>
+            </tr>
+          </tbody>
+          </table>
+          <script>
+          async function fetchUsers() 
+          {
+            const tableBody = document.getElementById('user-table-body');
+            try 
+              {
+                // Call the application layer API
+                const response = await fetch('/local-users');
+                const users = await response.json();
+
+                // Clear existing table content
+                tableBody.innerHTML = '';
+
+                // Dynamically populate the presentation layer
+                users.forEach(user => 
+                 {
+                    const row = `<tr>
+                        <td>${!user.id}</td>
+                        <td>${!user.name}</td>
+                        <td>${!user.email}</td>
+                    </tr>`;
+                    tableBody.innerHTML += row;
+                  });
+              } 
+                catch (error) 
+               {
+                    console.error('Error fetching data:', error);
+                    tableBody.innerHTML = `<tr><td colspan="3" style="color: red;">Failed to load data from backend.</td></tr>`;
+               }
+          }
+          </script>
+          </body>
+          </html>
+          EOF
+
+          # Create application directory
+          cd /opt/app
+
+          # Install Node.js 22
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+
+          #init will create package.json
+          npm init -y 
+
+          # Install Express
+          npm install express
+          # Install PM2 globally
+          npm install -g pm2
+
+          # Create application to act as a forwarder service to the app tier.
+          cat > server.js <<'EOF'
+          const express = require('express');
+          const path = require('path');
+          const app = express();
+          const HTTPPORT = process.env.HTTPPORT
+          const APPPORT = process.env.APPPORT;
+          const APPIP = process.env.APPIP;
+          
+          app.use(express.static(path.join(__dirname, 'public')));
+          
+          app.get('/local-users', async (req, res) => {
+            try {
+              const response = await fetch(`http://${!APPIP}:${!APPPORT}/api/users`);
+              const data = await response.json();
+              res.json(data);
+            } catch (error) {
+              console.error('Error fetching users:', error);
+              res.status(500).json({ error: 'Failed to fetch users' });
+            }
+          });            
+          app.listen(HTTPPORT, () => {
+            console.log(`Listening on port ${!HTTPPORT}`);
+          });
+          EOF
+
+          echo "Web application setup complete... starting PM2." >> message.txt
+          # Start application using PM2 (a process manager for node.js applications). This needs to run in the application dir.
+          # This startup is not working correctly, trying to execute it under ubuntu context is still missing env variables.  
+          #sudo -u ubuntu pm2 start server.js --name web-tier --update-env
+          #sudo -u ubuntu pm2 save
+          #sudo pm2 startup systemd -u ubuntu --hp /home/ubuntu
+          #sudo pm2 startup systemd --hp /root
+          #env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu 
+          
+          ##### Temporarily run it as root #####
+          pm2 start server.js --name web-tier  
+# =========================================================================
+# OUTPUT VALUES REQUIRED FOR STACK 1 ASSIGNMENT
+# =========================================================================
+Outputs:
+  DatabaseEndpoint:
+    Description: RDS Endpoint Address
+    Value: !GetAtt MySQLDatabase.Endpoint.Address
+  DatabasePort:
+    Description: MySQL Port
+    Value: !GetAtt MySQLDatabase.Endpoint.Port
+  DatabaseName:
+    Value: !Ref DBName
+  PublicALBDNSName:
+    Description: Public load balancer entry DNS address
+    Value: !GetAtt PublicWebALB.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicALBDNS"
+  WebServerInstanceId:
+    Description: Primary Web Server Instance ID (Kept for Stack 1 alignment constraints)
+    Value: !Ref WebServerAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-WebServerInstanceId"
+

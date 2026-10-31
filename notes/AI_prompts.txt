@@ -1,13 +1,30 @@
-
+## Elastic IP
 # I used this when I wanted to use an Elastic IP. I have a domain name that I can associate with the IP.  
-Review the attached CloudFormation templates.
+
+Review the attached CloudFormation templates.  (EC2_CloudFormation.yml and CF-NetworkStack-Assignment2.yaml)
 I want to keep the existing EC2 and RDS resources unchanged.
 Create a new CloudFormation stack that allocates and associates an Elastic IP with the existing WebServer EC2 instance.
 
 Requirements:
 - Use Export/ImportValue between stacks.
 - Show the Outputs that must be added to the original stack.
-- Generate a complete EIP stack with Parameters, Resources, and Outputs.
+- Generate an Elastic IP stack script.
 
 
+## High Availability
+This is what I used to start conversion to a HA structure. I wanted to keep using EC2 instances (there are other options but more comfortable with this)
 
+Review the attached CloudFormation templates for my AWS 3-tier application. (EC2_CloudFormation.yml, CF-NetworkStack-Assignment2.yaml and CF-ElasticIP-SSL.yaml)
+Task: 
+Suggest improvements to the application  to :
+	- Convert it to a High Availability architecture.
+	
+Deliverables:
+	1. Architecture diagram
+	2. Deployment Sequence
+	3. Updated Cloud Formation yaml scripts.
+	4. Validation Steps
+
+Constraints:
+-  Do not change the EC2 instances application UserData blocks.
+-  Use static EC2 instances in 2 Availability Zones

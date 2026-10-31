@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Edge Layer Routing Stack - Exposes high availability load balancer endpoints and validates core mapping addresses.
+
+Parameters:
+  EC2StackName:
+    Type: String
+    Default: CF-EC2Stack-Assignment-HA  # Make sure this matches the exact name you used to launch your Core Compute stack
+    Description: Name of the core compute stack exporting web architecture parameters.
+  HttpPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/HttpPort
+    Description: Frontend HTTP execution port.
+  DNSName:
+    Type: String
+    Default: cluen.mynetgear.com
+    Description: No-IP generated DNS host associated with your high availability web layer application.
+
+Resources:
+  # =========================================================================
+  # RESERVED COMPLIANCE LAYER 
+  # =========================================================================
+  # Retained to ensure absolute behavioral consistency with the original stack properties.
+  WebServerEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+Outputs:
+  ElasticIPAddress:
+    Description: Standalone Elastic IP provisioned for environment administration or edge forwarding.
+    Value: !Ref WebServerEIP
+
+  ElasticIPAllocationId:
+    Description: Allocation ID of the tracking Elastic IP.
+    Value: !GetAtt WebServerEIP.AllocationId
+
+  HighAvailabilityLoadBalancerDNS:
+    Description: The target address you must point your No-IP domain (://mynetgear.com) to.
+    Value:
+      Fn::ImportValue:
+        !Sub "${EC2StackName}-PublicALBDNS"
+
+  WebAppIPURL:
+    Description: High Availability application access URL directly addressing the public application load balancing mesh.
+    Value: !Sub
+      - "http://${ALBDNS}:${HttpPort}"
+      - ALBDNS:
+          Fn::ImportValue:
+            !Sub "${EC2StackName}-PublicALBDNS"
+
+  AssociatedInstanceId:
+    Description: Underlying primary target instance identifier.
+    Value:
+      Fn::ImportValue:
+        !Sub "${EC2StackName}-WebServerInstanceId"
+
+  WebAppURL:
+    Description: Public application execution URL mapped via your external domain broker entry.
+    Value: !Sub
+      - "http://${IPAddress}:${HttpPort}"
+      - IPAddress: !Ref DNSName
