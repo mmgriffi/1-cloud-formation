@@ -1,0 +1,360 @@
+# CloudFormation template for Network Layer - High Availability Multi-AZ Architecture
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Base Network Stack providing a Multi-AZ VPC with Public Subnets, Private Subnets, and outbound NAT Gateway pathing.
+
+Parameters:
+  SSHLocation:
+    Type: String
+    Default: 10.10.19.23
+    Description: The public IP address or range authorized to SSH directly into web servers.
+  VPCCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: The primary CIDR block for the overall VPC environment.
+    AllowedPattern: ^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})/(1[6-9]|2[0-8])$
+    ConstraintDescription: Enter a valid CIDR block structure such as 10.0.0.0/16.
+
+  DBPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/DBPort
+    Description: Target MySQL backend port retrieved from SSM Parameter Store.
+  HttpPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/HttpPort
+    Description: Frontend HTTP traffic port retrieved from SSM Parameter Store.
+  AppPort:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /shared/ports/AppPort
+    Description: Internal logic application tier port retrieved from SSM Parameter Store.
+
+Resources:
+  # =========================================================================
+  # CORE VIRTUAL PRIVATE CLOUD (VPC) & INTERNET GATEWAY
+  # =========================================================================
+  AssignmentVPC:
+    Type: "AWS::EC2::VPC"
+    DeletionPolicy: "Delete"
+    Properties:
+      CidrBlock: !Ref VPCCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: "Name"
+          Value: "AssignmentVPC"
+
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    DeletionPolicy: "Delete"
+    Properties:
+      Tags:
+        - Key: "Name"
+          Value: "InternetGateway"
+
+  AssignmentVPCGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    DeletionPolicy: "Delete"
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref AssignmentVPC
+
+  # =========================================================================
+  # HIGH AVAILABILITY MULTI-AZ SUBNET DESIGNATION
+  # =========================================================================
+  # PUBLIC WEB SUBNETS (ALB & WEB SERVERS)
+  PublicWebSubnet:
+    Type: "AWS::EC2::Subnet"
+    DeletionPolicy: "Delete"
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref AssignmentVPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [0, !Cidr [!Ref VPCCidr, 6, 8]]
+      Tags:
+        - Key: "Name"
+          Value: "PublicWebSubnet-AZ1"
+
+  PublicWebSubnetB:
+    Type: "AWS::EC2::Subnet"
+    DeletionPolicy: "Delete"
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref AssignmentVPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [1, !Cidr [!Ref VPCCidr, 6, 8]]
+      Tags:
+        - Key: "Name"
+          Value: "PublicWebSubnet-AZ2"
+
+  # PRIVATE APPLICATION SUBNETS (API WORKLOADS)
+  PrivateAppSubnet:
+    Type: "AWS::EC2::Subnet"
+    DeletionPolicy: "Delete"
+    Properties:
+      VpcId: !Ref AssignmentVPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [2, !Cidr [!Ref VPCCidr, 6, 8]]
+      Tags:
+        - Key: "Name"
+          Value: "PrivateAppSubnet-AZ1"
+
+  PrivateAppSubnetB:
+    Type: "AWS::EC2::Subnet"
+    DeletionPolicy: "Delete"
+    Properties:
+      VpcId: !Ref AssignmentVPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [3, !Cidr [!Ref VPCCidr, 6, 8]]
+      Tags:
+        - Key: "Name"
+          Value: "PrivateAppSubnet-AZ2"
+
+  # PRIVATE DATA SUBNETS (RDS DATABASE LAYER)
+  PrivateDbSubnetA:
+    Type: "AWS::EC2::Subnet"
+    DeletionPolicy: "Delete"
+    Properties:
+      VpcId: !Ref AssignmentVPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [4, !Cidr [!Ref VPCCidr, 6, 8]]
+      Tags:
+        - Key: "Name"
+          Value: "PrivateDbSubnetA"
+
+  PrivateDbSubnetB:
+    Type: "AWS::EC2::Subnet"
+    DeletionPolicy: "Delete"
+    Properties:
+      VpcId: !Ref AssignmentVPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [5, !Cidr [!Ref VPCCidr, 6, 8]]
+      Tags:
+        - Key: "Name"
+          Value: "PrivateDbSubnetB"
+
+  # =========================================================================
+  # NAT GATEWAY PROVISIONING (FOR SECURE PRIVATE OUTBOUND UPDATES)
+  # =========================================================================
+  NatEip:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: "vpc"
+
+  NatGateway:
+    Type: "AWS::EC2::NatGateway"
+    DependsOn: AssignmentVPCGatewayAttachment
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicWebSubnet
+      Tags:
+        - Key: "Name"
+          Value: "VpcNatGateway"
+
+  # =========================================================================
+  # ROUTE TABLES AND SUB-PATH ASSOCIATIONS
+  # =========================================================================
+  PublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    DeletionPolicy: "Delete"
+    Properties:
+      VpcId: !Ref AssignmentVPC
+      Tags:
+        - Key: "Name"
+          Value: "PublicRouteTable"
+
+  PrivateRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    DeletionPolicy: "Delete"
+    Properties:
+      VpcId: !Ref AssignmentVPC
+      Tags:
+        - Key: "Name"
+          Value: "PrivateRouteTable"
+
+  # OUTBOUND ROUTES
+  PublicRouteEntry1:
+    Type: "AWS::EC2::Route"
+    DependsOn: AssignmentVPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PrivateRouteEntry1:
+    Type: "AWS::EC2::Route"
+    DependsOn: NatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
+  # ASSOCIATIONS
+  PublicSubnetAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PublicWebSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PublicWebSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  AppSubnetAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateAppSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  AppSubnetBAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateAppSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  DbSubnetAAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateDbSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  DbSubnetBAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateDbSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # =========================================================================
+  # SECURITY GROUPS (EGRESS DEFINITIONS SECURED FOR NAT IMPLEMENTATION)
+  # =========================================================================
+  WebSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    DeletionPolicy: "Delete"
+    Properties:
+      GroupDescription: "Allows public HTTP inbound traffic and administrative SSH paths."
+      GroupName: "web-sg-assignment2"
+      VpcId: !Ref AssignmentVPC
+      SecurityGroupIngress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "tcp"
+          FromPort: !Ref HttpPort
+          ToPort: !Ref HttpPort
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+        - CidrIp: !Ref SSHLocation
+          IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+
+  AppSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    DeletionPolicy: "Delete"
+    Properties:
+      GroupDescription: "Allows isolation mapping only from web security group proxies."
+      GroupName: "app-sg-assignment2"
+      VpcId: !Ref AssignmentVPC
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: !Ref AppPort
+          SourceSecurityGroupId: !Ref WebSecurityGroup
+          ToPort: !Ref AppPort
+        - IpProtocol: "tcp"
+          FromPort: 22
+          SourceSecurityGroupId: !Ref WebSecurityGroup
+          ToPort: 22
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1" # Grants full patch/update egress visibility securely over the NAT gateway
+
+  DbSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    DeletionPolicy: "Delete"
+    Properties:
+      GroupDescription: "Restricts database cluster queries specifically to internal App engines."
+      GroupName: "db-sg-assignment2"
+      VpcId: !Ref AssignmentVPC
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: !Ref DBPort
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          ToPort: !Ref DBPort
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+
+  RDSSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: "Symmetric Multi-AZ mapping array for relational backends"
+      SubnetIds:
+        - !Ref PrivateDbSubnetA
+        - !Ref PrivateDbSubnetB
+      Tags:
+        - Key: Name
+          Value: "DBSubnetGroup"
+  WebALBAppPortIngress:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref WebSecurityGroup
+      IpProtocol: "tcp"
+      FromPort: !Ref AppPort
+      ToPort: !Ref AppPort
+      SourceSecurityGroupId: !Ref WebSecurityGroup # This breaks the loop completely!
+
+# =========================================================================
+# SYSTEM EXPORTS FOR INTER-STACK CHAINING
+# =========================================================================
+Outputs:
+  AssignmentVpcId:
+    Value: !Ref AssignmentVPC
+    Export:
+      Name: AssignmentVpcId
+  PublicWebSubnetId:
+    Value: !Ref PublicWebSubnet
+    Export:
+      Name: PublicWebSubnetId
+  PublicWebSubnetBId:
+    Value: !Ref PublicWebSubnetB
+    Export:
+      Name: PublicWebSubnetBId
+  PrivateAppSubnetId:
+    Value: !Ref PrivateAppSubnet
+    Export:
+      Name: PrivateAppSubnetId
+  PrivateAppSubnetBId:
+    Value: !Ref PrivateAppSubnetB
+    Export:
+      Name: PrivateAppSubnetBId
+  WebSecurityGroupId:
+    Value: !Ref WebSecurityGroup
+    Export:
+      Name: WebSecurityGroupId
+  AppSecurityGroupId:
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: AppSecurityGroupId
+  DbSecurityGroupId:
+    Value: !Ref DbSecurityGroup
+    Export:
+      Name: DbSecurityGroupId
+  RDSSubnetGroup:
+    Value: !Ref RDSSubnetGroup
+    Export:
+      Name: RDSSubnetGroup
+  DbPort:
+    Value: !Ref DBPort
+    Export:
+      Name: NetworkStack-DBPort
+  HttpPort:
+    Value: !Ref HttpPort
+    Export:
+      Name: NetworkStack-HttpPort
+  AppPort:
+    Value: !Ref AppPort
+    Export:
+      Name: NetworkStack-AppPort
