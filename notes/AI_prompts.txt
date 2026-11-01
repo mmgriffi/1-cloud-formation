@@ -1,3 +1,35 @@
+##Website
+## test/setup on promox VM host
+
+Generate files for a 3 tier web application
+
+Constraints : 
+1: The enviroment should be 3 Ubuntu Linux servers (web-tier, app-tier and mysqldatabase)
+2: Base scripts on nodejs.
+
+Task
+- generate single web page for front-end. This page will call app-tier on 1 defined port.
+- generate scripts for app-tier. These should run a simple query to the backend database.
+- results of query are rendered on web-tier.
+- generate a simple database with 1 table and populate with a few records. 
+
+#######
+
+##EC2 stack generation
+## Once I had the initial network components I could generate a basic stack script for the EC2 instances.
+Please review the attached cloud formation script to demonstrate 3-tier architecture.
+
+Constraints: This is a single availability zone network, multiple availability zones are not required.
+             Network stack is a draft only. 
+
+Task
+Create a EC2 instance for the web-tier (in the Public Web Subnet) and app-tier (in PrivateAppSubnet).
+Install nodejs on each instance.
+Create a MySQL RDS Database in the PrivateDBSubnet
+Generate a separate cloud formation script for the compute stack. 
+
+############
+
 ## Elastic IP
 # I used this when I wanted to use an Elastic IP. I have a domain name that I can associate with the IP.  
 
@@ -10,6 +42,7 @@ Requirements:
 - Show the Outputs that must be added to the original stack.
 - Generate an Elastic IP stack script.
 
+#################
 
 ## High Availability
 This is what I used to start conversion to a HA structure. I wanted to keep using EC2 instances (there are other options but more comfortable with this)
