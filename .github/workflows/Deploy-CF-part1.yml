@@ -21,11 +21,11 @@ jobs:
       - name: Deploy AWS CloudFormation Stack
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: my-cloudformation-stack
+          name: CF-staticS3-website
           template: ./infra/CFtemplate-Assignment1-template.yaml
           no-fail-on-empty-changeset: "1"
 
-      - name: Sync Files to S3
+      - name: Sync static Files to S3
         run: |
           #aws s3 sync ./src s3://atu-l00213529-cloudformation/ --delete
-          aws s3 sync ./src s3://atu-l00213529-cloudformation/
+          aws s3 sync ./src/staticS3 s3://atu-l00213529-cloudformation/
