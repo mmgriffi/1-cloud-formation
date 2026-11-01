@@ -115,8 +115,9 @@ aws cloudformation create-stack ^
 --region eu-west-1 
 ````
 
+
 5. **High Availability Changes**
-* To explore a High Availability I decided to keep using EC2 instances as I more familiar with this for troubleshooting and internal application setup,  and just replicate the required resources to a 2nd Availability Zone.  (Google AI suggested Auto Scaling Groups originally)
+* To explore a High Availability I decided to keep using EC2 instances as I more familiar with this for troubleshooting and internal application setup,  and just replicate the required resources to a 2nd Availability Zone.  
 * The Google AI prompt [here](/notes/AI_prompts.txt) provided me with changes to the 3 scripts I worked with so far. 
 
 ![HA Layout](/images/HA-Layout.jpg)
@@ -135,15 +136,45 @@ Also the websecurity group needed a specific ingress rule (port 5000) for the ap
 
 ![HA Website](/images/HA-WebPage.jpg)
 
+6. **Security Considerations**
+* Next I reconfigured the application to use a SSL certificate. 
+* **Summary of Changes**
+  - For testing I generated an OpenSSL cerificate and imported it to the AWS Cert Manager. The cert common name was No-Ip free domain name I created. 
+  - CF-NetworkStack-Assignment2-HA.yaml: There were no Network stack changes needed as port 443 was previously included in the ingress to webserver security group. 
+  - CF-EC2Stack-Assignment-HA.yaml: This has the majority of changes.  See [AI_prompts.txt](/notes/AI_prompts.txt)
+    - Add the SSL Cert ARN as a paremeter (this can be got from the Cert Manager console).
+    - Update the Public Web Load Balancer to use HTTPs.
+    - Add a HTTPS Listener for SSL termination and references the SSL cert ARN value.
+  - CF-ElasticIP-HA.yaml: Minimal changes to update the outputs strings from http to https and remove port references. 
+
+Stacks were recreated in same sequence and webpage validated. 
+(for testing only I got the IPV4 IP of the public loadbalancer and updated No-IP domain with that value. In a production scenario the domain record would be up updated with the full public web ALB name ) 
+
+![HA Website with SSL](/images/HA-SSL-WebPage.jpg)
+
+7.**Scalability Considerations**
+* The current configuration is a traditional VM layout, and does not take advantage of AWS Auto Scaling Group features, which would allow increase/decrease of resources as required.  Google AI reviewed my layout and suggested how it could change to auto-scaling groups and it did flag issues with the internal application configuration. In addition the App Server initialization included creating the database, this would be an issue each time an instance was spun up. 
+
+* **Summary of Changes**
+  - CF-NetworkStack-Assignment2-HA.yaml: There were no Network stack changes needed.
+  - CF-EC2Stack-Assignment-HA.yaml: This has the majority of changes.  See [AI_prompts.txt](/notes/AI_prompts.txt)
+    - Replace the 4 static EC2 instances with a new web-tier and app-tier. These are comprised of a EC2 LaunchTemplates and EC2 AutoScalingGroup.
+    - The "UserData" block is in the Launch template, unchanged from the earlier configurations.  
+    - Note: in this test I compromised and manually setup the SQL database and populate it. Including it in the resource Launch template would cause issues as it would run each time an instance was spun up. A solution for that would be to spin up a Lambda resource and run it one time to apply the contents of init.sql.  
+  - CF-ElasticIP-HA.yaml: Removed the WebServerEIP resource.  
+
+The 3 stacks were created in the same sequence as above and validated.
+
+![ASG Groups](/images/AutoScaleGroups.jpg)
+
 ## ToDo/Issues
  - ~~Incorrect sequencing the creation of the nodejs components caused the startup to fail.~~ This has been corrected. 
  - ~~Database setup is not automated. I need to ssh to the app node, login to mysql and run [init.sql](src/3tierapp/database/init.sql) ~~ This has been corrected. 
  - ~~The external IP of the webserver is subject to change. For a production system and elastic IP and associated gateway is needed. ~~  Elastic IP solves that. 
  - ~~The environment is not a high availability configuration.~~ HA is now configured. 
- - The website is not secured with a SSL cert. 
+ - ~~The website is not secured with a SSL cert.~~ This has been corrected.  
  - Database username/password are passed as inline parameters. It's possible to change to AWS Parameter store as secure string, but need further work to set up IAM roles that can read the parameters from within the UserData setup. Alternatively if I use GitHub actions, these can be secret values. 
  - ~~ Network configuration has hardcoded values for VPC, subnets.~~ This has been replaced with a VPCCidr parameter and I derive the subnet CIDR ranges from that .
-
 
 ## Co-Pilot/Google AI  prompts
 See [AI_prompts.txt](/notes/AI_prompts.txt)
