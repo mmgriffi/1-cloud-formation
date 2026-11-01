@@ -97,7 +97,7 @@ ParameterKey=DBName,ParameterValue=xxxxx ^
 
 ![Screenshot of webpage](images/3tierAppWebPage.jpg)
 
-* This part required a lot of troubeshooting:). Getting the package updates, correctly writing the nodejs files and running them correctly was a learning. 
+* This required a lot of troubeshooting:). Getting the package updates, correctly writing the nodejs files and running them correctly was a learning. 
 
 4. **Script Improvements for portability, better access.**
 * CF-NetworkStack-Assignment2.yaml :  User parameters define the VPCCidr, AppPort, HttpPort and Database Ports. These are applied to the relevant security groups. 
