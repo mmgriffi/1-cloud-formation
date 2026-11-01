@@ -96,7 +96,7 @@ ParameterKey=DBName,ParameterValue=xxxxx ^
 ````
 * Parameters common to both network and compute stacks AWS Systems Manager Parameter Store. (Values for web-tier HttpPort, mid tier App port and DB port )
 
-![Screenshot of webpage](images/3tierAppWebPage.png)
+![Screenshot of webpage](images/3tierAppWebPage.jpg)
 
 * This part required a lot of troubeshooting:). Getting the package updates, correctly writing the nodejs files and running them correctly was a learning. 
 
