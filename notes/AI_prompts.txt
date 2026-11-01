@@ -61,3 +61,30 @@ Deliverables:
 Constraints:
 -  Do not change the EC2 instances application UserData blocks.
 -  Use static EC2 instances in 2 Availability Zones
+
+
+##SSL conversion
+
+Review the attached Cloud Formation Scripts. (CF-NetworkStack-Assignment2-HA.yaml, EC2_CloudFormation-HA.yaml, CF-ElasticIP-HA.yaml)
+
+Constraints: Keep to the current static EC2 instances.
+
+Task : Add an AWS SSL certificateApply this to the web server layer.
+Change the web application use SSL.
+
+OutputsDo not generate a new Network stack script or Routing Stack script.
+As the Compute stack script is getting chopped in your output provide code blocks and original starting line numbers that I can change manually, rather than the full script.
+
+
+#######  Auto Scaling groups
+
+Review the attached Cloud Formation Scripts. I want to convert this to use scalable groups (ASGs)
+
+Constraint : Keep the configuration to 2 availability zones. 
+
+Task: Convert the application from static EC2 instances to use AWS Auto Scaling Groups. 
+Remove the database schema initialization (MySQL source ./init.sql from the App Tier.
+You should flag any changes that are needed to UserData blocks , if applicable.
+
+Outputs
+As script output is being chopped give me the script blocks for the web-tier first, then the app-tier and finally the database tier. 

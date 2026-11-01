@@ -12,30 +12,26 @@ Parameters:
     Description: Frontend HTTP execution port.
   DNSName:
     Type: String
-    Default: cluen.mynetgear.com
+    Default: cluen1.mynetgear.com
     Description: No-IP generated DNS host associated with your high availability web layer application.
 
 Resources:
   # =========================================================================
-  # RESERVED COMPLIANCE LAYER 
+  # ORCHESTRATION COMPLIANCE RESOURCE
   # =========================================================================
-  # Retained to ensure absolute behavioral consistency with the original stack properties.
-  WebServerEIP:
-    Type: AWS::EC2::EIP
+  # Replaces the deleted WebServerEIP to ensure valid template syntax.
+  # Stores the routing record pointer configuration safely inside the SSM Parameter store.
+  RoutingStackDeploymentAnchor:
+    Type: AWS::SSM::Parameter
     Properties:
-      Domain: vpc
+      Name: !Sub "/routing/${AWS::StackName}/dns-target"
+      Type: String
+      Value: !Ref DNSName
+      Description: Tracking anchor to satisfy CloudFormation compilation rules for routing pointer distributions.
 
 Outputs:
-  ElasticIPAddress:
-    Description: Standalone Elastic IP provisioned for environment administration or edge forwarding.
-    Value: !Ref WebServerEIP
-
-  ElasticIPAllocationId:
-    Description: Allocation ID of the tracking Elastic IP.
-    Value: !GetAtt WebServerEIP.AllocationId
-
   HighAvailabilityLoadBalancerDNS:
-    Description: The target address you must point your No-IP domain (://mynetgear.com) to.
+    Description: The target Canonical Name (CNAME) record address you must point your No-IP domain (mynetgear.com) to.
     Value:
       Fn::ImportValue:
         !Sub "${EC2StackName}-PublicALBDNS"
@@ -43,13 +39,13 @@ Outputs:
   WebAppIPURL:
     Description: High Availability application access URL directly addressing the public application load balancing mesh.
     Value: !Sub
-      - "http://${ALBDNS}:${HttpPort}"
+      - "https://${ALBDNS}"
       - ALBDNS:
           Fn::ImportValue:
             !Sub "${EC2StackName}-PublicALBDNS"
 
   AssociatedInstanceId:
-    Description: Underlying primary target instance identifier.
+    Description: The parent Auto Scaling Group identifier orchestrating the underlying compute fleet.
     Value:
       Fn::ImportValue:
         !Sub "${EC2StackName}-WebServerInstanceId"
@@ -57,5 +53,5 @@ Outputs:
   WebAppURL:
     Description: Public application execution URL mapped via your external domain broker entry.
     Value: !Sub
-      - "http://${IPAddress}:${HttpPort}"
-      - IPAddress: !Ref DNSName
+      - "https://${FQDNName}"
+      - FQDNName: !Ref DNSName
