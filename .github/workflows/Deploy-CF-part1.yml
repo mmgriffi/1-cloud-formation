@@ -2,12 +2,27 @@ name: Deploy CloudFormation and Sync to S3
 
 on:
   workflow_dispatch:
+    inputs:
+      pin:
+        description: 'Enter the Workflow PIN to authorize this deployment'
+        required: true
+        type: string
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Verify Workflow PIN
+        env:
+          INPUT_PIN: ${{ github.event.inputs.pin }}
+          SECRET_PIN: ${{ secrets.WORKFLOW_PIN }}
+        run: |
+          if [ "$INPUT_PIN" != "$SECRET_PIN" ]; then
+            echo "::error::Invalid Workflow PIN. Access Denied."
+            exit 1
+          fi
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
